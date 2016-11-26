@@ -1,0 +1,1 @@
+cp "C:\Users\Analogyc\workspace_mars\G Sendao\Default\libsendao.a" c:\\pub\\lib

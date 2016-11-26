@@ -1,0 +1,672 @@
+#include "sendao.h"
+
+expr *new_expr( void )
+{
+	expr *e = new expr;
+	e->chars = NULL;
+	e->repetition = 0;
+	e->name = NULL;
+	e->next = NULL;
+	e->set = NULL;
+	e->sub = NULL;
+	e->str = NULL;
+	
+	return e;
+}
+
+expr_match *new_expr_match( void )
+{
+	expr_match *em = new expr_match;
+	
+#ifdef EXPR_DEBUG
+	fprintf(stderr, "new_expr_match\n");
+#endif
+	em->name = NULL;
+	em->match = NULL;
+	em->next = NULL;
+	
+	return em;
+}
+
+#define e _e[depth]
+#define eroot _eroot[depth]
+#define elast _elast[depth]
+#define copybuf _copybuf[depth]
+#define pCopy _pCopy[depth]
+#define ptr _ptr[depth]
+
+expr *expr_parse( const char *buf )
+{
+	static int depth=-1;
+	static char _copybuf[32][128];
+	static expr *_e[32], *_eroot[32], *_elast[32];
+	static char *_pCopy[32];
+	static const char *_ptr[32];
+	char *pTmp;
+	char counter;
+	
+	if( !buf )
+		return NULL;
+	
+	depth++;
+	eroot = elast = e = NULL;
+	
+#ifdef EXPR_DEBUG
+	fprintf( stdout, "expr_parse: %s\n", buf );
+#endif
+	
+	for( ptr = buf; *ptr; ptr++ ) {
+#ifdef EXPR_DEBUG
+		fprintf(stdout, "%d %c\n", depth, *ptr);
+#endif
+		switch( *ptr ) {
+		case '.':
+			e = new_expr();
+			e->chars = str_dup(".");
+			if( elast ) {
+				elast->next = e;
+			} else {
+				eroot = e;
+			}
+			elast = e;
+			break;
+		case '*':
+			if( !e ) {
+				fprintf( stderr, "Syntax error: * without prefix\n");
+				exit( -1 );
+			}
+			e->repetition = 2;
+			break;
+		case '\\':
+			ptr++;
+			switch( *ptr ) {
+			case 'd':
+				e = new_expr();
+				e->chars = str_dup("0123456789");
+				if( elast ) {
+					elast->next = e;
+				} else {
+					eroot = e;
+				}
+				elast = e;
+				continue;
+			case 'n':
+				e = new_expr();
+				e->chars = str_dup("\n");
+				if( elast ) {
+					elast->next = e;
+				} else {
+					eroot = e;
+				}
+				elast = e;
+				continue;				
+			case 'w':
+				e = new_expr();
+				e->chars = str_dup(" \t\n\r");
+				if( elast ) {
+					elast->next = e;
+				} else {
+					eroot = e;
+				}
+				elast = e;
+				break;
+			default:
+				e = new_expr();
+				copybuf[0] = *ptr;
+				copybuf[1] = '\0';
+				e->chars = str_dup(copybuf);
+				if( elast ) {
+					elast->next = e;
+				} else {
+					eroot = e;
+				}
+				elast = e;
+				break;
+			}
+			break;
+		case '?':
+			if( !e ) {
+				fprintf( stderr, "Syntax error: ? without prefix\n");
+				exit( -1 );
+			}
+			e->repetition = 1;
+			break;
+		case '[':
+			e = new_expr();
+			pCopy = copybuf;
+			if( elast ) {
+				elast->next = e;
+			} else {
+				eroot = e;
+			}
+			elast = e;
+
+			ptr++;
+			while( *ptr != ']' && *ptr ) {
+				if( *ptr == '\\' ) {
+					ptr++;
+					*pCopy++ = *ptr++;
+					continue;
+				}
+				if( *ptr == '-' ) {
+					ptr++;
+					if( pCopy == copybuf || !*ptr || *ptr < *(pCopy-1) ) {
+						fprintf( stderr, "Syntax error: expected syntax \"a-A\"\n" );
+						exit( -1 );
+					}
+					pCopy--;
+					for( counter = *pCopy; counter <= *ptr ; counter++ ) {
+						*pCopy++ = counter;
+					}
+					ptr++;
+					continue;
+				}
+
+				*pCopy++ = *ptr++;
+			}
+			*pCopy = '\0';
+			e->chars = str_dup( copybuf );
+			break;
+		case '{':
+			e = new_expr();
+			if( elast ) {
+				elast->next = e;
+			} else {
+				eroot = e;
+			}
+			elast = e;
+			
+			e->set = expr_parse( ptr + 1 );
+			ptr = _ptr[depth+1];
+//			fprintf( stdout, "ptr at %c after {} block\n", *ptr);
+			
+			// Pull the name up a level
+#ifdef EXPR_DEBUG
+			fprintf(stdout, "Pulling setname into %p: %s\n", e, _copybuf[depth+1]);
+#endif
+			e->name = str_dup( _copybuf[depth+1] );
+			break;
+		case '(':
+			e = new_expr();
+			if( elast ) {
+				elast->next = e;
+			} else {
+				eroot = e;
+			}
+			elast = e;
+			
+			e->sub = expr_parse( ptr + 1 );
+			ptr = _ptr[depth+1];
+//			fprintf( stdout, "ptr at %c after () block\n", *ptr);
+			// Pull the name up a level
+#ifdef EXPR_DEBUG
+			fprintf(stdout, "Pulling subname into %p: %s\n", e, _copybuf[depth+1]);
+#endif
+			e->name = str_dup( _copybuf[depth+1] );
+#ifdef EXPR_DEBUG
+			fprintf(stdout, "Name is currently %s\n", e->name);
+#endif
+			break;
+		case ')': case '}':
+			*copybuf = '\0';
+			if( *(ptr+1) == ':' ) {
+				ptr+=2;
+				if( *ptr == '(' ) {
+					ptr++;
+					pCopy = copybuf;
+					while( *ptr != ')' && *ptr ) {
+						*pCopy++ = *ptr++;
+					}
+					*pCopy = '\0';
+#ifdef EXPR_DEBUG
+					fprintf( stdout, "eroot match: '%s' copybuf: %s\n", eroot->chars?eroot->chars:"", copybuf );
+#endif
+				}
+			}
+#ifdef EXPR_DEBUG
+			fprintf(stdout, "return: matched end of block: %s\n", ptr);
+#endif
+			depth--;
+			return _eroot[depth+1];
+		default:
+			copybuf[0] = *ptr;
+			copybuf[1] = '\0';
+
+			if( e && e->str ) {
+				int i1, i2;
+				
+				i1 = strlen(e->str)/256;
+				i2 = (i1+strlen(copybuf))/256;
+				if( i1 != i2 ) {
+					pTmp = (char*)realloc( e->str, ((int)((strlen(e->str)+strlen(copybuf))/256)+1)*256 );
+						
+					strcpy( pTmp, e->str );
+					free( e->str );
+					strcat( pTmp, copybuf );
+					e->str = pTmp;
+				} else {
+					strcat( e->str, copybuf );
+				}
+				break;
+			}
+
+			e = new_expr();
+			if( elast ) {
+				elast->next = e;
+			} else {
+				eroot = e;
+			}
+			elast = e;
+
+			e->str = (char*)malloc( ((int)(strlen(copybuf)/256)+1)*256 );
+			strcpy( e->str, copybuf );
+			break;
+		}
+	}
+	
+	depth--;
+#ifdef EXPR_DEBUG
+	fprintf(stdout, "return: matched end of string\n");
+#endif
+	return _eroot[depth+1];			
+}
+#undef e
+#undef elast
+#undef eroot
+#undef copybuf
+#undef pCopy
+#undef ptr
+
+void expr_dump( expr *e )
+{
+	while( e ) {
+		fprintf( stdout, "e %p: '%s' '%s' %d\n", e, e->name?e->name:"", e->chars?e->chars:e->str?e->str:"none", e->repetition );
+		if( e->set ) {
+			fprintf( stdout, "[set]\n" );
+			expr_dump( e->set );
+			fprintf( stdout, "[/set]\n" );
+		}
+		if( e->sub ) {
+			fprintf( stdout, "[sub]\n" );
+			expr_dump( e->sub );
+			fprintf( stdout, "[/sub]\n" );
+		}
+		e = e->next;
+	}
+}
+
+void expr_match_dump( expr_match *em )
+{
+	while( em ) {
+		fprintf( stdout, "%s: %s\n", em->name ? em->name : "undef", em->match ? em->match : "children:" );
+		em = em->next;
+	}
+}
+
+const char *atomic_expr_test( expr *e, const char *buf, char *copybuf )
+{
+	char *c;
+	
+//	fprintf( stderr, "atomic_test(%c, %s%s)\n", *buf, e->str?e->str:"", e->chars?e->chars:"");
+	
+	if( e->str ) {
+		if( strncmp( e->str, buf, strlen(e->str) ) == 0 ) {
+			if( copybuf ) {
+				strncpy( copybuf, buf, strlen(e->str) );
+				copybuf[ strlen(e->str) ] = '\0';
+			}
+			return buf + strlen( e->str );
+		}
+		return NULL;
+	}
+	if( e->chars ) {
+		for( c = e->chars; *c; c++ ) {
+			if( *c == '.' ) {
+				if( copybuf ) {
+					*copybuf++ = *buf;
+					*copybuf = '\0';
+				}
+				return buf+1;
+			}
+			if( *buf == *c ) {
+				if( copybuf ) {
+					*copybuf++ = *buf;
+					*copybuf = '\0';
+				}
+				return buf+1;
+			}
+		}
+	}
+
+	return NULL;
+}
+
+bool expr_is_atomic( expr *e )
+{
+	if( e->sub || e->set )
+		return false;
+	if( e->str || e->chars )
+		return true;
+	return false;
+}
+
+#define em	_em[depth]
+#define emroot _emroot[depth]
+#define emlast _emlast[depth]
+#define ptr _ptr[depth]
+#define copybuf _copybuf[depth]
+#define pCopy _pCopy[depth]
+#define e _e[depth]
+#define elast _elast[depth]
+
+expr_match *expr_test( expr *roote, const char *buf, char *parentname )
+{
+	static int depth=-1;
+	static expr *_e[32], *_elast[32];
+	static char _copybuf[32][256], *_pCopy[32];
+	static const char *_ptr[32];
+	static expr_match *_em[32], *_emroot[32], *_emlast[32];
+	expr *enext;
+	const char *pAtomicBuf;
+	int samecount=0;
+	bool bMatched;
+	
+	depth++;
+	if( depth > 31 ) {
+		fprintf( stderr, "Expression testing dove down more than 32 layers... dying.\n" );
+		abort();
+	}
+	em = emroot = emlast = NULL;
+	e = roote;
+	elast = NULL;
+	samecount = 0;
+
+	#ifdef EXPR_DEBUG
+	fprintf( stdout, "expr_test(%p[%s], %20.20s)\n", e, e->chars?e->chars:"", buf);
+	#endif
+	ptr = buf;
+	
+	while( *ptr && e ) {
+#ifdef EXPR_DEBUG
+		fprintf( stdout, "At e(%s)(%s)(%d), ptr %c: [%p %p], %satomic\n",
+			e->chars?e->chars:"", e->str?e->str:"", e->repetition, *ptr, e->set, e->sub,
+			expr_is_atomic( e ) ? "" : "non");
+#endif
+
+		if( expr_is_atomic( e ) ) {
+			// We will do an atomic test.
+			
+			// If repetition is involved, we have to make sure to stop at the right point.
+			// Therefore, locate the stopping point:
+			if( e->repetition > 0 ) {
+				int idepth;
+								
+				// We will first consider the current expression depth (which basically are
+				// indicated by () and {} sets), and then all higher sets, until we find an
+				// atomic match.
+				for( idepth = depth, enext=NULL; idepth >= 0; idepth-- ) {
+					if( _e[idepth]->next ) {
+						enext = _e[idepth]->next;
+						// Check to see if there is something within this expression test
+						// that is an atom which we can test against.
+						while( enext && !expr_is_atomic(enext) ) {
+							if( enext->set ) {
+								enext = enext->set;
+							} else if( enext->sub ) {
+								enext = enext->sub;
+							}
+						}
+						if( enext )
+							break;
+					}
+				}
+			} else {
+				// We aren't going to be repeating our search.. don't need enext.
+				enext = NULL;
+			}
+
+			// samecount checks to see how many matches have been made already.
+			if( elast != e ) {
+				samecount=0;
+			}
+			elast = e;
+			if( !parentname && !e->name ) {
+				pCopy = NULL;
+			} else {
+				pCopy = copybuf;
+			}
+			bMatched = false;
+			*copybuf = '\0';
+			
+			while( 1 ) {
+				if( samecount>0 && enext ) {
+					// Check to see if we have a next-ptr match.
+					if( !enext->chars || !strstr(enext->chars, ".") ) {
+						pAtomicBuf = atomic_expr_test( enext, ptr, NULL );
+						if( pAtomicBuf ) {
+							// We matched somewhere else; go loop through and see
+							// if we -can- match it.
+							break;
+						} 
+					}
+				}
+				// Check to see if we are storing this message.
+				// This is the real test...
+				pAtomicBuf = atomic_expr_test( e, ptr, pCopy );
+				if( !pAtomicBuf ) {
+					// failed to match this character
+					break;
+				}
+				ptr = pAtomicBuf; // commit the match
+				bMatched = true;
+				if( pCopy )
+					pCopy += strlen(pCopy);
+				
+				if( *copybuf && strlen( copybuf ) > 128 ) {
+					em = new_expr_match();
+					em->by = e;
+					em->match = str_dup(copybuf);
+#ifdef EXPR_DEBUG
+					fprintf( stderr, "Matched1: %s (%p %p %p)\n", em->match, em, emlast, emroot);
+#endif
+					if( emlast )
+						emlast->next = em;
+					if( !emroot )
+						emroot = em;
+					emlast = em;
+					pCopy = copybuf;
+					*pCopy = '\0';
+				}
+				if( e->repetition == 2 || ( e->repetition == 1 && samecount<1 ) ) {
+					samecount++;
+					continue;
+				} else {
+					break;
+				}
+			}
+			if( pCopy )
+				*pCopy = '\0';
+			if( *copybuf ) {
+				em = new_expr_match();
+				em->by = e;
+				em->match = str_dup(copybuf);
+#ifdef EXPR_DEBUG
+				fprintf( stderr, "Matched2: %s (%p %p %p)\n", em->match, em, emlast, emroot);
+#endif
+				if( emlast )
+					emlast->next = em;
+				if( !emroot )
+					emroot = em;
+				emlast = em;
+			}
+			
+			if( !bMatched ) {
+				// Match failure scenario
+				if( e != elast && elast && elast->repetition==2 || ( elast->repetition == 1 && samecount < 1 ) ) {
+#ifdef EXPR_DEBUG
+					fprintf( stdout, "Escape 1 to last (%p to %p)\n", e, elast);
+#endif
+					e = elast;
+					continue;
+				}
+#ifdef EXPR_DEBUG
+				fprintf( stdout, "Match failed, dropping\n");
+#endif
+				depth--;
+				return _emroot[depth+1];
+			}
+			
+			e = e->next;
+			
+			continue;			
+		}
+		
+		// Control recursion into sub/set, since we're not atomic.
+		if( e->sub ) {
+			em = expr_test( e->sub, ptr, e->name ? e->name : parentname );
+			if( em ) {
+				// Name it appropriately. Names are always stored at the root.
+				em->name = str_dup( e->name );
+				
+				if( emlast )
+					emlast->next = em;
+				if( !emroot )
+					emroot = em;
+
+				// Combine all matches until we find a named entry
+				// Dump results
+#ifdef EXPR_DEBUG
+				expr_match_dump( em );
+#endif
+				
+				// Locate last entity
+				for( emlast = em; em->next; emlast = em, em = em->next );
+/*
+				named = false;
+				emlast = em;
+				emnext = em->next;
+				emlast->next = NULL;
+				while( emnext ) {
+					em = emnext;
+					emnext = em->next;
+					
+					if( named )
+						continue;
+					if( em->name && *em->name ) {
+						emlast->next = em;
+						named = true;
+						continue;
+					}
+					if( !em->match || !*em->match )
+						continue;
+					tmpbuf = (char*)malloc( strlen( emlast->match ) + strlen( em->match ) + 1);
+					strcpy( tmpbuf, emlast->match );
+					strcat( tmpbuf, em->match );
+					free( emlast->match );
+					free( em->match );
+					emlast->match = tmpbuf;
+					delete em;
+				}
+				emlast = em;
+*/
+				e = e->next;
+				ptr = _ptr[depth+1];
+			} else {
+				// Match failure scenario
+				if( e != elast && elast && ( elast->repetition==2 || ( elast->repetition ==1 && samecount < 1 ) ) ) {
+//					fprintf( stdout, "Escape 2 to last\n");
+					e = elast;
+					continue;
+				}
+//				fprintf( stdout, "Match failed (2), dropping\n");
+				depth--;
+				return _emroot[depth+1];
+			}
+			continue;
+		}
+		
+		// Still no match - navigate through a set, if that's what we need?
+		if( e->set ) {			
+			expr_match *emt=NULL;
+			
+			while( ptr && *ptr && (em = expr_test( e->set, ptr, e->name?e->name:parentname )) ) {
+				ptr = _ptr[depth+1];
+#ifdef EXPR_DEBUG
+				fprintf(stdout, "returned in set: ptr = %p\n", em);
+#endif
+				emt = new_expr_match();
+				emt->by = e;
+				emt->name = str_dup( e->name );
+				emt->match = NULL;
+				emt->next = em;
+				if( emlast )
+					emlast->next = emt;
+				if( !emroot )
+					emroot = emt;
+				
+				// Dump results
+#ifdef EXPR_DEBUG
+				expr_match_dump( emt );
+#endif
+				
+				// Locate last entity
+				for( em = emt; em->next; emlast = em, em = em->next );
+				
+/*
+				named = false;
+				emlast = em;
+				emnext = em->next;
+				emlast->next = NULL;
+				while( emnext ) {
+					em = emnext;
+					emnext = em->next;
+					
+					if( named )
+						continue;
+					if( em->name && *em->name ) {
+						emlast->next = em;
+						named = true;
+						continue;
+					}
+					if( !em->match || !*em->match )
+						continue;
+					tmpbuf = (char*)malloc( strlen( emlast->match ) + strlen( em->match ) + 1);
+					strcpy( tmpbuf, emlast->match );
+					strcat( tmpbuf, em->match );
+					free( emlast->match );
+					free( em->match );
+					emlast->match = tmpbuf;
+					delete em;
+					em = NULL;
+				}
+				emlast = em;
+*/
+			}
+			if( !emt ) {
+				// Match failure scenario
+				if( e != elast && elast && ( elast->repetition==2 || ( elast->repetition ==1 && samecount < 1 ) ) ) {
+#ifdef EXPR_DEBUG
+					fprintf( stdout, "Escape 3 to last\n");
+#endif
+					e = elast;
+					continue;
+				}
+#ifdef EXPR_DEBUG
+				fprintf( stdout, "Match failed (3), dropping\n");
+#endif
+				depth--;
+				return _emroot[depth+1];
+			}
+		}
+	}
+	depth--;
+	return _emroot[depth+1];
+}
+
+#undef em
+#undef emroot
+#undef emlast
+#undef ptr
+#undef copybuf
+#undef pCopy
+#undef e
