@@ -357,7 +357,10 @@ stringbuf::stringbuf(const char *src, uint16_t chunk)
 	alloced = 0;
 	while(alloced<=len+1)
 		alloced += alloc_chunk;
-	p = (char*)malloc(alloced);
+	if( alloced > 0 )
+		p = (char*)malloc(alloced);
+	else
+		p = NULL;
 	if( len > 0 )
 		strcpy(p,src);
 	else if( alloced > 0 )
@@ -371,9 +374,9 @@ stringbuf::~stringbuf()
 
 void stringbuf::reset(void)
 {
-	len=0;
-	if(p)
+	if(p&&len>0)
 		*p='\0';
+	len=0;
 }
 
 void stringbuf::append(const char *src)
@@ -407,6 +410,7 @@ void stringbuf::expand(int target_len)
 			break;
 		}
 	}
+	if( alloced == 0 ) return;
 	char *tmp = (char*)malloc(alloced);
 	if(p){
 		strcpy(tmp,p);
