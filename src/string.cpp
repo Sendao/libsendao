@@ -369,13 +369,18 @@ stringbuf::stringbuf(const char *src, uint16_t chunk)
 
 stringbuf::~stringbuf()
 {
-	free(p);
+	if(p!=NULL)
+		free(p);
 }
 
 void stringbuf::reset(void)
 {
 	if(p&&len>0)
 		*p='\0';
+	if(p){
+		free(p);
+		p=NULL;
+	}
 	len=0;
 }
 
@@ -410,8 +415,16 @@ void stringbuf::expand(int target_len)
 			break;
 		}
 	}
-	if( alloced == 0 ) return;
+	if( alloced == 0 ) {
+		p=NULL;
+		return;
+	}
 	char *tmp = (char*)malloc(alloced);
+	if( !tmp ) {
+		printf("Tried to allocate %d bytes failed\n", alloced);
+		p=NULL;
+		abort();
+	}
 	if(p){
 		strcpy(tmp,p);
 		free(p);
@@ -451,8 +464,7 @@ int stringbuf::vsprintf(const char *src, va_list args)
 }
 void stringbuf::clear(void)
 {
-	len=0;
-	if(alloced>0)*p=0;
+	reset();
 }
 void stringbuf::replace(const char *srch, const char *repl)
 {
