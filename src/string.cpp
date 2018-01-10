@@ -341,7 +341,7 @@ const char *str_exp(const char *src, const char *search)
 	return NULL;
 }
 
-stringbuf::stringbuf(uint16_t chunk)
+stringbuf::stringbuf(uint32_t chunk)
 {
 	len=0;
 	alloc_chunk = chunk;
@@ -349,7 +349,7 @@ stringbuf::stringbuf(uint16_t chunk)
 	maxlen=0;
 	p = NULL;
 }
-stringbuf::stringbuf(const char *src, uint16_t chunk)
+stringbuf::stringbuf(const char *src, uint32_t chunk)
 {
 	len=strlen(src);
 	maxlen = 0;
@@ -384,44 +384,62 @@ void stringbuf::reset(void)
 	len=0;
 }
 
-void stringbuf::append(const char *src)
+void stringbuf::insertend(const char *src)
 {
-	uint16_t newlen = len+strlen(src);
-	expand(newlen+1);
+	uint32_t newlen = len+strlen(src)+1;
+	if( newlen >= alloced ) {
+		::printf("insertend had to expand!\n");
+		expand( newlen - alloced );
+	}
 	if( len == 0 )
 		strcpy(p,src);
 	else
 		strcat(p,src);
-	len=newlen;
+	len = newlen-1;
+}
+void stringbuf::append(const char *src)
+{
+	uint32_t newlen = len+strlen(src)+1;
+	if( newlen >= alloced ) expand( newlen - alloced );
+	if( len == 0 )
+		strcpy(p,src);
+	else
+		strcat(p,src);
+	len=newlen-1;
 }
 void stringbuf::append(char c)
 {
-	uint16_t newlen = len+1;
-	expand(newlen+1);
+	uint32_t newlen = 1;
+	if( len <= 0 ) newlen++;
+	expand(newlen);
 	p[newlen-1] = c;
 	p[newlen] = '\0';
-	len=newlen;
+	len++;
 }
+// void stringbuf::expandto( int target_len )
 void stringbuf::expand(int target_len)
 {
 	if( target_len != 0 ) target_len -= alloced;
+	//::printf("expand(%d)\n", target_len);
 	while( target_len >= 0 ) {
 		alloced += alloc_chunk;
 		target_len -= alloc_chunk;
+		//::printf("%d %d\n", alloced, target_len);
 		if( maxlen!=0 && alloced > maxlen ) {
 			alloced = maxlen;
-			printf("Tried to expand buffer over maxlen %d\n", maxlen);
+			::printf("Tried to expand buffer over maxlen %d\n", maxlen);
 			abort();
 			break;
 		}
 	}
+	//::printf("alloced %d target %d\n", alloced, target_len);
 	if( alloced == 0 ) {
 		p=NULL;
 		return;
 	}
 	char *tmp = (char*)malloc(alloced);
 	if( !tmp ) {
-		printf("Tried to allocate %d bytes failed\n", alloced);
+		::printf("Tried to allocate %d bytes failed\n", alloced);
 		p=NULL;
 		abort();
 	}
@@ -453,7 +471,7 @@ int stringbuf::vsprintf(const char *src, va_list args)
     i=::vsprintf(buf, src, args);
 
     if( i > 204800 ) {
-    	printf("Buffer overflow.\n");
+    	::printf("Buffer overflow.\n");
     	exit(-1);
     }
 
@@ -490,7 +508,7 @@ void stringbuf::replace(const char *srch, const char *repl)
 void stringbuf::setcontents( const char *newbuffer )
 {
 	len = strlen(newbuffer);
-	expand(len+1);
+	expand((len+1)-alloced);
 	strcpy(p, newbuffer);
 }
 
@@ -551,7 +569,7 @@ void linebuf::expand( void )
 
 
 
-bitbuf::bitbuf(uint16_t chunk)
+bitbuf::bitbuf(uint32_t chunk)
 {
 	len=0;
 	alloc_chunk = chunk;
@@ -567,7 +585,7 @@ bitbuf::~bitbuf()
 }
 void bitbuf::append(char *src, int nlen)
 {
-	uint16_t newlen = len+nlen;
+	uint32_t newlen = len+nlen;
 	if( alloced <= newlen ) {
 		char *tmp;
 		while(alloced<=newlen)

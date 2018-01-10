@@ -33,12 +33,12 @@ class tlist
 	// Variables
 	tnode *nodes;
 	tnode *last;
-	uint16_t count;
+	uint32_t count;
 	signed long int type;
 
 	protected:
 	tnode **iters;
-	uint16_t iter_count;
+	uint32_t iter_count;
 
 	public:
 	// Functions

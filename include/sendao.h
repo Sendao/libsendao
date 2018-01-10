@@ -91,20 +91,21 @@ class stringbuf
 {
 	public:
 	char *p;
-	uint16_t len;
-	uint16_t alloced;
-	uint16_t alloc_chunk;
-	uint16_t maxlen;
+	uint32_t len;
+	uint32_t alloced;
+	uint32_t alloc_chunk;
+	uint32_t maxlen;
 
 	public:
-	stringbuf(uint16_t alloc_chunk=1024);
-	stringbuf(const char*, uint16_t alloc_chunk=1024);
+	stringbuf(uint32_t alloc_chunk=1024);
+	stringbuf(const char*, uint32_t alloc_chunk=1024);
 	~stringbuf();
+	void insertend(const char*);
 	void append(const char*);
 	void append(char c);
 	void reset(void);
 	void replace(const char *srch, const char *repl);
-	void expand(int target_len=0);
+	void expand(int expand_len=0);
 	void setcontents(const char *buf);
 	void printf(const char *src,...);
 	int vsprintf(const char *src, va_list args);
@@ -129,12 +130,12 @@ class bitbuf
 {
 	public:
 	char *p;
-	uint16_t len;
-	uint16_t alloced;
-	uint16_t alloc_chunk;
+	uint32_t len;
+	uint32_t alloced;
+	uint32_t alloc_chunk;
 
 	public:
-	bitbuf(uint16_t alloc_chunk=1024);
+	bitbuf(uint32_t alloc_chunk=1024);
 	~bitbuf();
 	void append(char*, int len);
 	void clear(void);
